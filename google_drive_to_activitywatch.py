@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,13 +12,13 @@ from typing import Any, Iterable
 from urllib import error, request
 
 
-# Optional hard override. Leave as None to use config.json.
-GOOGLE_DRIVE_FOLDER = None
-
 CONFIG_FILE = Path(__file__).with_name("config.json")
+DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
+DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "google_drive_folder": "",
+    "google_drive_folder_id": "",
+    "google_drive_service_account_file": "",
     "input_file_globs": ["*"],
     "last_sync_file": "last_sync.txt",
     "activitywatch_endpoint": "http://localhost:5600/api/v1/buckets/aw-watcher-android-test/events",
@@ -37,7 +39,8 @@ TS_ONLY = re.compile(
 
 @dataclass(frozen=True)
 class AppConfig:
-    google_drive_folder: Path
+    google_drive_folder_id: str | None
+    google_drive_service_account_file: Path | None
     input_file_globs: list[str]
     last_sync_file: Path
     activitywatch_endpoint: str
@@ -78,14 +81,18 @@ def build_config() -> AppConfig:
     raw = dict(DEFAULT_CONFIG)
     raw.update(load_json_file(CONFIG_FILE))
 
-    override = GOOGLE_DRIVE_FOLDER
-    google_drive_folder = (
-        Path(override).expanduser().resolve()
-        if override
-        else resolve_path(str(raw.get("google_drive_folder", "")), CONFIG_FILE.parent)
+    google_drive_folder_id = str(raw.get("google_drive_folder_id", "")).strip() or None
+    service_account_file = resolve_path(
+        str(raw.get("google_drive_service_account_file", "")),
+        CONFIG_FILE.parent,
     )
-    if google_drive_folder is None:
-        raise ValueError("google_drive_folder is missing. Set it in config.json or GOOGLE_DRIVE_FOLDER.")
+    if google_drive_folder_id:
+        if service_account_file is None:
+            raise ValueError(
+                "google_drive_service_account_file is required when google_drive_folder_id is set."
+            )
+    else:
+        raise ValueError("google_drive_folder_id is missing. Set it in config.json.")
 
     last_sync_file = resolve_path(str(raw.get("last_sync_file", "last_sync.txt")), CONFIG_FILE.parent)
     if last_sync_file is None:
@@ -100,7 +107,8 @@ def build_config() -> AppConfig:
         raise ValueError("input_file_globs must be a non-empty list of strings.")
 
     return AppConfig(
-        google_drive_folder=google_drive_folder,
+        google_drive_folder_id=google_drive_folder_id,
+        google_drive_service_account_file=service_account_file,
         input_file_globs=input_file_globs,
         last_sync_file=last_sync_file,
         activitywatch_endpoint=str(raw["activitywatch_endpoint"]),
@@ -163,23 +171,90 @@ def write_last_sync(path: Path, timestamp: datetime) -> None:
     path.write_text(format_timestamp(timestamp) + "\n", encoding="utf-8")
 
 
-def file_matches(path: Path, patterns: Iterable[str]) -> bool:
+def file_matches(name: str, patterns: Iterable[str]) -> bool:
     if not patterns:
         return True
-    return any(path.match(pattern) for pattern in patterns)
+    return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
 
 
-def find_latest_file(folder: Path, patterns: list[str]) -> Path:
-    if not folder.exists():
-        raise FileNotFoundError(f"Google Drive folder not found: {folder}")
-    files = [
-        entry
-        for entry in folder.iterdir()
-        if entry.is_file() and file_matches(entry, patterns)
-    ]
-    if not files:
-        raise FileNotFoundError(f"No matching files found in folder: {folder}")
-    return max(files, key=lambda item: (item.stat().st_mtime, item.name.lower()))
+@dataclass(frozen=True)
+class DriveFile:
+    id: str
+    name: str
+    mime_type: str
+
+
+def build_drive_session(service_account_file: Path):
+    from google.auth.transport.requests import AuthorizedSession
+    from google.oauth2 import service_account
+
+    credentials = service_account.Credentials.from_service_account_file(
+        service_account_file,
+        scopes=[DRIVE_READONLY_SCOPE],
+    )
+    return AuthorizedSession(credentials)
+
+
+def find_latest_drive_file(session: Any, folder_id: str, patterns: list[str], timeout_seconds: int) -> DriveFile:
+    page_token: str | None = None
+    while True:
+        params: dict[str, Any] = {
+            "q": f"'{folder_id}' in parents and trashed = false",
+            "fields": "nextPageToken,files(id,name,modifiedTime,mimeType)",
+            "orderBy": "modifiedTime desc,name desc",
+            "pageSize": 1000,
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        response = session.get(
+            f"{DRIVE_API_BASE}/files",
+            params=params,
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        for item in payload.get("files", []):
+            name = str(item.get("name", ""))
+            if not file_matches(name, patterns):
+                continue
+            return DriveFile(
+                id=str(item["id"]),
+                name=name,
+                mime_type=str(item.get("mimeType", "")),
+            )
+
+        page_token = payload.get("nextPageToken")
+        if not page_token:
+            break
+
+    raise FileNotFoundError(
+        f"No matching files found in Google Drive folder: {folder_id}"
+    )
+
+
+def download_drive_file(session: Any, drive_file: DriveFile, destination: Path, timeout_seconds: int) -> Path:
+    if drive_file.mime_type.startswith("application/vnd.google-apps."):
+        raise ValueError(
+            f"Drive file {drive_file.name} is a Google Docs item. Export it as a regular file before syncing."
+        )
+
+    response = session.get(
+        f"{DRIVE_API_BASE}/files/{drive_file.id}",
+        params={
+            "alt": "media",
+            "supportsAllDrives": "true",
+        },
+        timeout=timeout_seconds,
+    )
+    response.raise_for_status()
+    safe_name = re.sub(r'[<>:"/\\\\|?*]+', "_", Path(drive_file.name).name).strip() or "downloaded_source"
+    destination = destination.with_name(safe_name)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(response.content)
+    return destination
 
 
 def load_json_records(path: Path, encoding: str) -> list[dict[str, Any]]:
@@ -331,10 +406,27 @@ def post_events(endpoint: str, events: list[dict[str, Any]], timeout_seconds: in
 
 
 def main() -> int:
+    temp_dir: tempfile.TemporaryDirectory[str] | None = None
     try:
         config = build_config()
         last_sync = read_last_sync(config.last_sync_file)
-        latest_file = find_latest_file(config.google_drive_folder, config.input_file_globs)
+        service_account_file = config.google_drive_service_account_file
+        assert service_account_file is not None
+        session = build_drive_session(service_account_file)
+        drive_file = find_latest_drive_file(
+            session,
+            config.google_drive_folder_id,
+            config.input_file_globs,
+            config.request_timeout_seconds,
+        )
+        temp_dir = tempfile.TemporaryDirectory()
+        latest_file = download_drive_file(
+            session,
+            drive_file,
+            Path(temp_dir.name) / Path(drive_file.name).name,
+            config.request_timeout_seconds,
+        )
+        log(f"Latest source file from Google Drive: {drive_file.name}")
         log(f"Latest source file: {latest_file}")
 
         records = load_source_records(latest_file, config.encoding)
@@ -358,6 +450,9 @@ def main() -> int:
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr, flush=True)
         return 1
+    finally:
+        if temp_dir is not None:
+            temp_dir.cleanup()
 
 
 if __name__ == "__main__":

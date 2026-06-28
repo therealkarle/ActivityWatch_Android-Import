@@ -1,5 +1,6 @@
 {
-  "google_drive_folder": "C:\\Path\\To\\Your\\GoogleDrive\\Logs",
+  "google_drive_folder_id": "1li1VUemrnpItesekEeeHN-_6COnUHgLc",
+  "google_drive_service_account_file": "C:\\Path\\To\\Your\\service-account.json",
   "input_file_globs": [
     "*"
   ],

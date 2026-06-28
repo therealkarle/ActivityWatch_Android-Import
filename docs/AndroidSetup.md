@@ -1,14 +1,16 @@
 # Android ActivityWatch Setup via MacroDroid
 
-This documentation describes the automated logging of window and app activities on the Android device and the passive export to a synchronized Google Drive folder. From there, the data is automatically imported into ActivityWatch on the PC.
+This documentation describes the automated logging of window and app activities on the Android device and the passive export to Google Drive. From there, the data is automatically imported into ActivityWatch on the PC.
 
 ---
 
 ## 1. Prerequisites & Apps
 
 * **Android Device** with **MacroDroid** installed (Pro version recommended for unlimited macros).
-* **Google Drive** App (logged in with the account that has access to the target sync folder).
+* **Google Drive** App (logged in with the account that has access to the target folder).
 * **ActivityWatch Android Watcher** (acting as the background logging source).
+
+Create a Google Cloud service account, download the JSON key, and share the target Drive folder with the service account email address.
 
 ---
 
@@ -41,7 +43,14 @@ The exported data is written to the target bucket `aw-watcher-android-test`. A s
 
 ---
 
-## 4. Troubleshooting & Maintenance
+## 4. Setup Notes
+
+* Set `google_drive_folder_id` to the Drive folder ID from the shared folder URL.
+* Set `google_drive_service_account_file` to the path of the service account JSON key on the PC.
+* Make sure the uploaded export file is a regular file, not a Google Docs document.
+
+---
+
+## 5. Troubleshooting & Maintenance
 
 * **API Timeout Errors:** If MacroDroid runs into a `SocketTimeoutException` (e.g., trying to hit `127.0.0.1` while the app is sleeping), ensure that **Battery Optimization** is set to **Unrestricted** for both ActivityWatch and MacroDroid in the Android system settings. Adding a 3-second delay action right after launching the app gives the local API server enough time to initialize.
-* **Google Drive Sync Delay:** The PC-side runner searches for the file based on its *modification time* on the local drive. Make sure "Google Drive for Desktop" is actively running on your PC so the background sync is completed before the script executes.
