@@ -1,6 +1,7 @@
 config.json
 env
 last_sync.txt
+BSPJsonFiles
 
 __pycache__
 .agents
