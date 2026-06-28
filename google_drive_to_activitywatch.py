@@ -322,33 +322,45 @@ def load_json_records(path: Path, encoding: str) -> list[dict[str, Any]]:
     except json.JSONDecodeError:
         return []
 
-    records: list[dict[str, Any]] = []
-    if isinstance(root, list):
-        items = root
-    elif isinstance(root, dict):
-        items = []
-        events = root.get("events")
-        if isinstance(events, list):
-            items.extend(events)
-        elif isinstance(events, dict):
-            for value in events.values():
-                if isinstance(value, list):
-                    items.extend(value)
+    def collect_items(value: Any) -> list[dict[str, Any]]:
+        collected: list[dict[str, Any]] = []
+        if isinstance(value, list):
+            for item in value:
+                collected.extend(collect_items(item))
+            return collected
 
-        for key in ("records", "items", "rows", "data"):
-            value = root.get(key)
-            if isinstance(value, list):
-                items.extend(value)
+        if not isinstance(value, dict):
+            return collected
 
-        if not items:
-            items = [root]
-    else:
-        return []
+        if "timestamp" in value:
+            collected.append(value)
 
-    for item in items:
-        if isinstance(item, dict):
-            records.append(item)
-    return records
+        buckets = value.get("buckets")
+        if isinstance(buckets, dict):
+            for bucket in buckets.values():
+                if isinstance(bucket, dict):
+                    events = bucket.get("events")
+                    if isinstance(events, list):
+                        for event in events:
+                            collected.extend(collect_items(event))
+                    elif isinstance(events, dict):
+                        for event_list in events.values():
+                            if isinstance(event_list, list):
+                                for event in event_list:
+                                    collected.extend(collect_items(event))
+
+        for key in ("events", "records", "items", "rows", "data"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                for item in nested:
+                    collected.extend(collect_items(item))
+            elif isinstance(nested, dict):
+                for item in nested.values():
+                    collected.extend(collect_items(item))
+
+        return collected
+
+    return collect_items(root)
 
 
 def parse_plain_text_records(path: Path, encoding: str) -> list[dict[str, Any]]:
