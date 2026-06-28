@@ -230,6 +230,60 @@ The script works best with:
 - a file containing bucket data under `buckets`
 - a flattened event list where each item includes a timestamp
 
+### Full Android Export Flow
+
+The recommended setup is:
+- MacroDroid triggers a nightly export
+- ActivityWatch is briefly opened so the local server is awake
+- the export is fetched from `http://localhost:5600/api/0/export`
+- the file is saved directly into the shared Google Drive folder
+- the PC importer picks up the newest file on the next run
+
+### MacroDroid Setup on Samsung
+
+Create one MacroDroid macro with a nightly trigger and these actions:
+
+#### Trigger
+
+1. Open **MacroDroid** and create a new macro.
+2. Add a trigger.
+3. Choose **Date/Time**.
+4. Select **Regular Time**.
+5. Set the time to something like `02:00`.
+
+#### Actions
+
+1. Add an action to **start the ActivityWatch app**.
+2. Add a short **delay of 3 seconds**.
+3. Add an **HTTP Request** action.
+4. Set the request method to `GET`.
+5. Use this URL:
+
+```text
+http://localhost:5600/api/0/export
+```
+
+6. Enable **Save to File**.
+7. Open the file picker.
+8. In the Samsung/Android file manager, open the side menu and select **Google Drive**.
+9. Navigate to the shared folder `ActivityWatch_Android`.
+10. Save the file as `aw_export.json`.
+11. Enable **Overwrite existing file** so the importer always sees the latest export.
+
+### Constraints
+
+Add constraints so the macro only runs in good conditions:
+- connected to your home Wi-Fi
+- device plugged in
+
+### Samsung Battery Optimization
+
+Disable battery optimization for both apps:
+- `MacroDroid`
+- `ActivityWatch`
+
+Set both apps to **Unrestricted** so Android does not kill them overnight.
+
 ### Timestamp and Field Names
 
 If your export uses different field names, adjust these config values:
