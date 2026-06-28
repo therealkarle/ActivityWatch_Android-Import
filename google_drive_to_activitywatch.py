@@ -568,7 +568,7 @@ def pick_first(value: dict[str, Any], keys: Iterable[str]) -> Any:
     return None
 
 
-def normalize_event(record: dict[str, Any], config: AppConfig, force_zero_duration: bool = False) -> dict[str, Any] | None:
+def normalize_event(record: dict[str, Any], config: AppConfig) -> dict[str, Any] | None:
     timestamp_value = pick_first(record, config.timestamp_fields) or record.get("timestamp")
     if timestamp_value is None:
         return None
@@ -593,9 +593,7 @@ def normalize_event(record: dict[str, Any], config: AppConfig, force_zero_durati
         "timestamp": format_timestamp(timestamp),
         "data": payload,
     }
-    if force_zero_duration:
-        event["duration"] = 0.0
-    elif duration_value is not None:
+    if duration_value is not None:
         try:
             event["duration"] = float(duration_value)
         except (TypeError, ValueError):
@@ -609,12 +607,11 @@ def collect_events(
     records: list[dict[str, Any]],
     config: AppConfig,
     last_sync: datetime | None,
-    force_zero_duration: bool = False,
 ) -> tuple[list[dict[str, Any]], datetime | None]:
     events: list[dict[str, Any]] = []
     newest: datetime | None = last_sync
     for record in records:
-        event = normalize_event(record, config, force_zero_duration=force_zero_duration)
+        event = normalize_event(record, config)
         if event is None:
             continue
         timestamp = parse_timestamp(event["timestamp"])
@@ -734,7 +731,6 @@ def main() -> int:
                 target_bucket.records,
                 config,
                 last_sync,
-                force_zero_duration=is_window_bucket,
             )
             if not source_events:
                 continue

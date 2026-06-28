@@ -89,7 +89,7 @@ class AfkBucketTests(unittest.TestCase):
             )
         )
 
-    def test_window_collect_events_forces_zero_duration(self) -> None:
+    def test_window_collect_events_preserves_duration(self) -> None:
         config = aw.AppConfig(
             google_drive_folder_id="folder-id",
             google_drive_service_account_file=None,
@@ -110,10 +110,10 @@ class AfkBucketTests(unittest.TestCase):
             {"timestamp": "2026-06-28T08:01:00Z", "duration": 999},
         ]
 
-        events, newest = aw.collect_events(records, config, None, force_zero_duration=True)
+        events, newest = aw.collect_events(records, config, None)
 
         self.assertEqual(len(events), 2)
-        self.assertTrue(all(event["duration"] == 0.0 for event in events))
+        self.assertTrue(all(event["duration"] == 999.0 for event in events))
         self.assertEqual(aw.parse_timestamp(events[0]["timestamp"]), aw.parse_timestamp("2026-06-28T08:00:00Z"))
         self.assertEqual(newest, aw.parse_timestamp("2026-06-28T08:01:00Z"))
 
