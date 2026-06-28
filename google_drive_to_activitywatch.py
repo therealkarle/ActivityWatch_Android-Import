@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import socket
 import re
 import sys
 import tempfile
@@ -10,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from urllib import error, request
+from urllib.parse import urlparse, urlunparse
 
 
 CONFIG_FILE = Path(__file__).with_name("config.json")
@@ -132,6 +134,7 @@ def parse_timestamp(value: Any) -> datetime:
     if not text:
         raise ValueError("Empty timestamp string")
     normalized = text.replace("Z", "+00:00")
+    parsed: datetime | None = None
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
@@ -177,6 +180,25 @@ def file_matches(name: str, patterns: Iterable[str]) -> bool:
     return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
 
 
+def parse_activitywatch_endpoint(endpoint: str) -> tuple[str, str]:
+    parsed = urlparse(endpoint)
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 4 or parts[-1] != "events" or parts[-3] != "buckets":
+        raise ValueError(
+            "activitywatch_endpoint must end with /buckets/<bucket_id>/events."
+        )
+
+    bucket_id = parts[-2]
+    if len(parts) < 4 or parts[0] != "api":
+        raise ValueError(
+            "activitywatch_endpoint must include an API prefix like /api/0/buckets/<bucket_id>/events."
+        )
+    parts[1] = "0"
+    bucket_path = "/" + "/".join(parts[:-1])
+    bucket_url = urlunparse(parsed._replace(path=bucket_path, params="", query="", fragment=""))
+    return bucket_url, bucket_id
+
+
 @dataclass(frozen=True)
 class DriveFile:
     id: str
@@ -193,6 +215,39 @@ def build_drive_session(service_account_file: Path):
         scopes=[DRIVE_READONLY_SCOPE],
     )
     return AuthorizedSession(credentials)
+
+
+def aw_request(url: str, method: str, timeout_seconds: int, body: bytes | None = None) -> bytes:
+    req = request.Request(url, data=body, method=method)
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+    with request.urlopen(req, timeout=timeout_seconds) as response:
+        status = getattr(response, "status", response.getcode())
+        if status >= 300:
+            raise RuntimeError(f"Unexpected HTTP status {status} from ActivityWatch.")
+        return response.read()
+
+
+def ensure_activitywatch_bucket(endpoint: str, timeout_seconds: int) -> None:
+    bucket_url, bucket_id = parse_activitywatch_endpoint(endpoint)
+    bucket_payload = {
+        "client": "google_drive_to_activitywatch",
+        "hostname": socket.gethostname(),
+        "type": "manual",
+    }
+
+    try:
+        aw_request(bucket_url, "POST", timeout_seconds, json.dumps(bucket_payload).encode("utf-8"))
+        log(f"Ensured ActivityWatch bucket exists: {bucket_id}")
+    except error.HTTPError as exc:
+        if exc.code in {200, 201, 204, 304, 409}:
+            return
+        if exc.code == 405:
+            raise RuntimeError(
+                f"ActivityWatch rejected bucket creation at {bucket_url} with 405. "
+                "Check that activitywatch_endpoint uses the documented /api/0/buckets/<bucket_id>/events route."
+            ) from exc
+        raise
 
 
 def find_latest_drive_file(session: Any, folder_id: str, patterns: list[str], timeout_seconds: int) -> DriveFile:
@@ -267,21 +322,29 @@ def load_json_records(path: Path, encoding: str) -> list[dict[str, Any]]:
     except json.JSONDecodeError:
         return []
 
+    records: list[dict[str, Any]] = []
     if isinstance(root, list):
         items = root
     elif isinstance(root, dict):
-        items = None
-        for key in ("events", "records", "items", "rows", "data"):
+        items = []
+        events = root.get("events")
+        if isinstance(events, list):
+            items.extend(events)
+        elif isinstance(events, dict):
+            for value in events.values():
+                if isinstance(value, list):
+                    items.extend(value)
+
+        for key in ("records", "items", "rows", "data"):
             value = root.get(key)
             if isinstance(value, list):
-                items = value
-                break
-        if items is None:
+                items.extend(value)
+
+        if not items:
             items = [root]
     else:
         return []
 
-    records: list[dict[str, Any]] = []
     for item in items:
         if isinstance(item, dict):
             records.append(item)
@@ -412,7 +475,9 @@ def main() -> int:
         last_sync = read_last_sync(config.last_sync_file)
         service_account_file = config.google_drive_service_account_file
         assert service_account_file is not None
+        assert config.google_drive_folder_id is not None
         session = build_drive_session(service_account_file)
+        ensure_activitywatch_bucket(config.activitywatch_endpoint, config.request_timeout_seconds)
         drive_file = find_latest_drive_file(
             session,
             config.google_drive_folder_id,
@@ -431,12 +496,16 @@ def main() -> int:
 
         records = load_source_records(latest_file, config.encoding)
         if not records:
-            log("No parseable records found. Nothing to send.")
+            log("No parseable records found in the downloaded export. Nothing to send.")
             return 0
+        log(f"Loaded {len(records)} source record(s).")
 
         events, newest_timestamp = collect_events(records, config, last_sync)
         if not events:
-            log("No new events to import.")
+            if last_sync is None:
+                log("No importable events found in the source export.")
+            else:
+                log(f"No new events to import after last_sync={format_timestamp(last_sync)}.")
             return 0
 
         post_events(config.activitywatch_endpoint, events, config.request_timeout_seconds)

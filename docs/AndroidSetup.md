@@ -20,7 +20,8 @@ The setup relies on automated HTTP requests and file operations triggered at spe
 
 ### Macro 1: Log Intervals & HTTP Requests
 * **Trigger:** Regular Interval (e.g., every 10–15 minutes) or specific system events.
-* **Actions:** * Wakes the ActivityWatch app to ensure the local server is running.
+* **Actions:**
+    * Wakes the ActivityWatch app to ensure the local server is running.
     * Fetches the current activity log data from the local ActivityWatch API (`http://localhost:5600/api/0/export`).
     * Saves the response locally as a temporary JSON file.
 
@@ -37,9 +38,10 @@ The setup relies on automated HTTP requests and file operations triggered at spe
 
 The exported data is written to the target bucket `aw-watcher-android-test`. A successful pass validates the following structure:
 
-* **Format:** Events contain precise ISO timestamps (`timestamp`) along with the respective app and window metadata.
+* **Format:** The exported file should be a raw ActivityWatch export JSON, or a flattened list of event objects containing ISO timestamps (`timestamp`) along with the respective app and window metadata.
 * **Chronology:** Data is captured seamlessly up to the execution timestamp.
 * **Incremental Sync:** The PC importer uses a local tracking file (`last_sync.txt`) to process *only* events with a timestamp strictly greater than the last recorded entry, completely preventing duplicate events in the bucket.
+* **Bucket Creation:** The importer creates the target bucket (`aw-watcher-android-test`) automatically on first run if it is missing, using the documented ActivityWatch REST route under `/api/0`.
 
 ---
 

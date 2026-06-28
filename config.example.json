@@ -5,7 +5,7 @@
     "*"
   ],
   "last_sync_file": "last_sync.txt",
-  "activitywatch_endpoint": "http://localhost:5600/api/v1/buckets/aw-watcher-android-test/events",
+  "activitywatch_endpoint": "http://localhost:5600/api/0/buckets/aw-watcher-android-test/events",
   "timestamp_fields": [
     "timestamp",
     "time",
