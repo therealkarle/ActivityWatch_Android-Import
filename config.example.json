@@ -1,0 +1,28 @@
+{
+  "google_drive_folder": "C:\\Path\\To\\Your\\GoogleDrive\\Logs",
+  "input_file_globs": [
+    "*"
+  ],
+  "last_sync_file": "last_sync.txt",
+  "activitywatch_endpoint": "http://localhost:5600/api/v1/buckets/aw-watcher-android-test/events",
+  "timestamp_fields": [
+    "timestamp",
+    "time",
+    "datetime",
+    "date",
+    "start",
+    "created_at"
+  ],
+  "duration_fields": [
+    "duration",
+    "length",
+    "seconds"
+  ],
+  "payload_fields": [
+    "data",
+    "event",
+    "payload"
+  ],
+  "encoding": "utf-8",
+  "request_timeout_seconds": 15
+}

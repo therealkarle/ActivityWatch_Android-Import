@@ -1,0 +1,5 @@
+config.json
+last_sync.txt
+
+__pycache__
+.agents
