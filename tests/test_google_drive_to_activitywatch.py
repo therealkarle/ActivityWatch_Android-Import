@@ -21,6 +21,7 @@ class ConfigTests(unittest.TestCase):
                         "google_drive_service_account_file": "service-account.json",
                         "afk_duplicate_bucket_ids": ["aw-watcher-window_FloneA54"],
                         "afk_duplicate_upload_original_bucket": False,
+                        "afk_duplicate_idle_gap_seconds": 900,
                     }
                 ),
                 encoding="utf-8",
@@ -31,6 +32,7 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.afk_duplicate_bucket_ids, ["aw-watcher-window_FloneA54"])
         self.assertFalse(config.afk_duplicate_upload_original_bucket)
+        self.assertEqual(config.afk_duplicate_idle_gap_seconds, 900)
 
 
 class AfkBucketTests(unittest.TestCase):
@@ -51,18 +53,35 @@ class AfkBucketTests(unittest.TestCase):
         self.assertEqual(duplicated.records, bucket.records)
         self.assertEqual(duplicated.bucket_type, "afk")
 
-    def test_build_afk_duplicate_events_only_emits_not_afk_spans(self) -> None:
+    def test_build_afk_duplicate_events_inserts_afk_gap(self) -> None:
         window_events = [
             {"timestamp": "2026-06-28T08:00:00Z", "duration": 0.0, "data": {}},
             {"timestamp": "2026-06-28T08:05:00Z", "duration": 0.0, "data": {}},
         ]
 
-        afk_events = aw.build_afk_duplicate_events(window_events)
+        afk_events = aw.build_afk_duplicate_events(window_events, 120)
 
-        self.assertEqual(len(afk_events), 2)
-        self.assertTrue(all(event["data"]["status"] == "not-afk" for event in afk_events))
+        self.assertEqual(len(afk_events), 3)
+        self.assertEqual(afk_events[0]["data"]["status"], "not-afk")
         self.assertEqual(afk_events[0]["duration"], 120.0)
-        self.assertEqual(afk_events[1]["duration"], 120.0)
+        self.assertEqual(afk_events[1]["data"]["status"], "afk")
+        self.assertEqual(afk_events[1]["duration"], 180.0)
+        self.assertEqual(afk_events[2]["data"]["status"], "not-afk")
+        self.assertEqual(afk_events[2]["duration"], 120.0)
+
+    def test_build_afk_duplicate_events_uses_configurable_gap(self) -> None:
+        window_events = [
+            {"timestamp": "2026-06-28T08:00:00Z", "duration": 0.0, "data": {}},
+            {"timestamp": "2026-06-28T08:10:00Z", "duration": 0.0, "data": {}},
+        ]
+
+        afk_events = aw.build_afk_duplicate_events(window_events, 300)
+
+        self.assertEqual(len(afk_events), 3)
+        self.assertEqual(afk_events[0]["duration"], 300.0)
+        self.assertEqual(afk_events[1]["data"]["status"], "afk")
+        self.assertEqual(afk_events[1]["duration"], 300.0)
+        self.assertEqual(afk_events[2]["duration"], 300.0)
 
     def test_should_duplicate_as_afk_matches_exact_bucket_id(self) -> None:
         self.assertTrue(
@@ -112,6 +131,7 @@ class AfkBucketTests(unittest.TestCase):
             activitywatch_hostname="FloneA54",
             afk_duplicate_bucket_ids=[],
             afk_duplicate_upload_original_bucket=True,
+            afk_duplicate_idle_gap_seconds=120,
             timestamp_fields=["timestamp"],
             duration_fields=["duration"],
             payload_fields=["data"],

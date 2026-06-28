@@ -9,7 +9,7 @@ ActivityWatch Google Drive Import downloads the newest matching file from a shar
 It is designed for:
 - people who want to export ActivityWatch data from Android to Google Drive
 - anyone who wants a simple, incremental import into a local ActivityWatch instance
-- users who want AFK buckets with only `not-afk` spans for imported window buckets
+- users who want AFK buckets with configurable `not-afk` and `afk` spans for imported window buckets
 - GitHub repositories that need clear, reproducible setup instructions
 
 ## Main Features
@@ -19,7 +19,7 @@ It is designed for:
 - Imports ActivityWatch export JSON, nested bucket exports, or flattened event lists.
 - Supports incremental sync through `last_sync.txt`.
 - Creates missing ActivityWatch buckets automatically.
-- Can create `aw-watcher-afk_*` buckets with only `not-afk` spans for selected window imports.
+- Can create `aw-watcher-afk_*` buckets with `not-afk` and `afk` spans for selected window imports.
 - Can keep or skip the original bucket when AFK duplication is enabled.
 - Accepts both JSON exports and plain-text timestamped event logs.
 - Supports configurable timestamp, duration, and payload field names.
@@ -81,7 +81,7 @@ For each parsed record the script:
 
 ### AFK Duplication
 
-You can list bucket IDs in `afk_duplicate_bucket_ids` to create a matching `aw-watcher-afk_*` bucket. For window buckets, the script writes only `not-afk` spans and skips `afk` gap events.
+You can list bucket IDs in `afk_duplicate_bucket_ids` to create a matching `aw-watcher-afk_*` bucket. For window buckets, the script writes `not-afk` spans and inserts `afk` gaps when the idle window is exceeded.
 
 ### Original Bucket Control
 
@@ -321,8 +321,9 @@ The application reads `config.json` from the repository root. Keep this file out
 | `last_sync_file` | string | Local file that stores the newest imported timestamp. |
 | `activitywatch_base_url` | string | Base URL of your ActivityWatch server. Default: `http://localhost:5600`. |
 | `activitywatch_hostname` | string | Fallback hostname used when imported metadata does not include one. |
-| `afk_duplicate_bucket_ids` | array of strings | Bucket IDs that should also create an AFK bucket with only `not-afk` spans. |
+| `afk_duplicate_bucket_ids` | array of strings | Bucket IDs that should also create an AFK bucket with `not-afk` and `afk` spans. |
 | `afk_duplicate_upload_original_bucket` | boolean | Upload the original bucket as well as the AFK copy. |
+| `afk_duplicate_idle_gap_seconds` | integer | Idle gap, in seconds, before the AFK span ends. Default: `120`. |
 | `timestamp_fields` | array of strings | Candidate field names for timestamps. |
 | `duration_fields` | array of strings | Candidate field names for durations. |
 | `payload_fields` | array of strings | Candidate field names for nested payload objects. |
@@ -341,6 +342,7 @@ The application reads `config.json` from the repository root. Keep this file out
   "activitywatch_hostname": "FloneA54",
   "afk_duplicate_bucket_ids": ["aw-watcher-window_FloneA54"],
   "afk_duplicate_upload_original_bucket": true,
+  "afk_duplicate_idle_gap_seconds": 120,
   "timestamp_fields": ["timestamp", "time", "datetime", "date", "start", "created_at"],
   "duration_fields": ["duration", "length", "seconds"],
   "payload_fields": ["data", "event", "payload"],
@@ -365,6 +367,16 @@ The script runs once, finds the newest matching file in Google Drive, imports an
 
 Use Windows Task Scheduler or another scheduler if you want regular syncs. The script is idempotent with respect to already imported timestamps, so repeated runs do not re-import the same events.
 
+### Delete Created Buckets
+
+If you want to remove the buckets created by the importer, run the batch file `delete_created_buckets.bat`. It deletes these bucket IDs by default:
+
+- `aw-import-unlock_FloneA54`
+- `aw-watcher-afk_FloneA54`
+- `aw-watcher-window_FloneA54`
+
+The script uses the ActivityWatch REST delete route with `force=1`.
+
 ## ActivityWatch Buckets
 
 ### Bucket Creation
@@ -375,7 +387,7 @@ The importer creates the target bucket on first use if it is missing. This keeps
 
 Android window exports are treated specially:
 - the original imported bucket keeps the event data
-- the AFK mirror bucket contains only `not-afk` spans
+- the AFK mirror bucket contains `not-afk` and `afk` spans based on the configured idle gap
 
 ### Duplicate Protection
 

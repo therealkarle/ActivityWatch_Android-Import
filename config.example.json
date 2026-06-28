@@ -11,6 +11,7 @@
     "aw-watcher-window_FloneA54"
   ],
   "afk_duplicate_upload_original_bucket": true,
+  "afk_duplicate_idle_gap_seconds": 120,
   "timestamp_fields": [
     "timestamp",
     "time",
