@@ -261,7 +261,7 @@ def aw_request(url: str, method: str, timeout_seconds: int, body: bytes | None =
 def ensure_activitywatch_bucket(base_url: str, bucket: ExportBucket, hostname_override: str, timeout_seconds: int) -> None:
     bucket_url, _ = build_activitywatch_urls(base_url, bucket.bucket_id)
     bucket_hostname = resolve_bucket_hostname(bucket.hostname, hostname_override)
-    bucket_payload = {
+    bucket_payload: dict[str, Any] = {
         "client": bucket.client or "google_drive_to_activitywatch",
         "hostname": bucket_hostname,
         "type": bucket.bucket_type or "manual",
