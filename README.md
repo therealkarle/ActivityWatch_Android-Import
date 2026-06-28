@@ -33,7 +33,7 @@ It is designed for:
 5. Point `google_drive_service_account_file` to your downloaded key.
 6. Set `google_drive_folder_id` to the Drive folder ID.
 7. Make sure ActivityWatch is running locally.
-8. Run `python qw_sync_android_gdrive.py`.
+8. Run `python aw_sync_android_gdrive.py`.
 
 ## Table of Contents
 
@@ -159,7 +159,7 @@ Make sure the local ActivityWatch app is running and accepting requests on the c
 Start the main script from the repository root:
 
 ```powershell
-python qw_sync_android_gdrive.py
+python aw_sync_android_gdrive.py
 ```
 
 ## Google Cloud Setup
@@ -356,7 +356,7 @@ All commands below assume you run them from the repository root.
 ### Normal Run
 
 ```powershell
-python qw_sync_android_gdrive.py
+python aw_sync_android_gdrive.py
 ```
 
 The script runs once, finds the newest matching file in Google Drive, imports any new events, and updates `last_sync.txt`.
@@ -385,7 +385,7 @@ The script will not re-import events that are older than or equal to the timesta
 
 Two startup helpers are mentioned in the source comments for manual setup:
 
-1. Create a `.bat` file that runs `python "C:\path\to\qw_sync_android_gdrive.py"`.
+1. Create a `.bat` file that runs `python "C:\path\to\aw_sync_android_gdrive.py"`.
 2. Put the batch file into the Windows startup folder or schedule it with Task Scheduler.
 
 If you prefer a hidden startup workflow, launch the batch file through a `.vbs` wrapper.

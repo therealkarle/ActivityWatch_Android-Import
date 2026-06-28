@@ -812,6 +812,6 @@ if __name__ == "__main__":
 
 
 # Windows autostart:
-# 1. Create a .bat file that calls: python "C:\path\to\qw_sync_android_gdrive.py"
+# 1. Create a .bat file that calls: python "C:\path\to\aw_sync_android_gdrive.py"
 # 2. Put the .bat into shell:startup for per-user login autostart, or create a Task Scheduler task
 #    that runs once at logon/system start and exits after the script finishes.

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import google_drive_to_activitywatch as aw
+import aw_sync_android_gdrive as aw
 
 
 class ConfigTests(unittest.TestCase):
