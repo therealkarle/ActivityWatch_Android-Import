@@ -23,7 +23,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "input_file_globs": ["*"],
     "last_sync_file": "last_sync.txt",
     "activitywatch_base_url": "http://localhost:5600",
-    "activitywatch_hostname": "AndroidDevice",
+    "activitywatch_hostname": "",
     "timestamp_fields": ["timestamp", "time", "datetime", "date", "start", "created_at"],
     "duration_fields": ["duration", "length", "seconds"],
     "payload_fields": ["data", "event", "payload"],
@@ -192,6 +192,43 @@ def build_activitywatch_urls(base_url: str, bucket_id: str) -> tuple[str, str]:
     return bucket_url, events_url
 
 
+def resolve_bucket_hostname(export_hostname: str, fallback_hostname: str) -> str:
+    candidate = export_hostname.strip()
+    if candidate and candidate.lower() != "unknown":
+        return candidate
+    return fallback_hostname.strip() or socket.gethostname()
+
+
+def bucket_safe_hostname(hostname: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", hostname.strip())
+    return safe.strip("_") or "unknown"
+
+
+def normalize_import_bucket(bucket: ExportBucket, hostname: str) -> ExportBucket:
+    host_part = bucket_safe_hostname(hostname)
+    source_id = bucket.bucket_id.lower()
+
+    if source_id.startswith("aw-watcher-android-"):
+        kind = source_id.removeprefix("aw-watcher-android-") or "events"
+        if bucket.bucket_type == "currentwindow":
+            bucket_id = f"aw-watcher-window_{host_part}"
+        else:
+            bucket_id = f"aw-import-{kind}_{host_part}"
+    elif bucket.bucket_id.endswith(f"_{host_part}"):
+        bucket_id = bucket.bucket_id
+    else:
+        bucket_id = f"{bucket.bucket_id}_{host_part}"
+
+    return ExportBucket(
+        bucket_id=bucket_id,
+        bucket_type=bucket.bucket_type,
+        client="google_drive_to_activitywatch",
+        hostname=hostname,
+        data=bucket.data,
+        records=bucket.records,
+    )
+
+
 @dataclass(frozen=True)
 class DriveFile:
     id: str
@@ -223,7 +260,7 @@ def aw_request(url: str, method: str, timeout_seconds: int, body: bytes | None =
 
 def ensure_activitywatch_bucket(base_url: str, bucket: ExportBucket, hostname_override: str, timeout_seconds: int) -> None:
     bucket_url, _ = build_activitywatch_urls(base_url, bucket.bucket_id)
-    bucket_hostname = hostname_override or bucket.hostname or socket.gethostname()
+    bucket_hostname = resolve_bucket_hostname(bucket.hostname, hostname_override)
     bucket_payload = {
         "client": bucket.client or "google_drive_to_activitywatch",
         "hostname": bucket_hostname,
@@ -599,25 +636,30 @@ def main() -> int:
         total_events = 0
         newest_timestamp = last_sync
         for bucket_export in bucket_exports:
-            events, bucket_newest = collect_events(bucket_export.records, config, last_sync)
+            target_hostname = resolve_bucket_hostname(bucket_export.hostname, config.activitywatch_hostname)
+            target_bucket = normalize_import_bucket(bucket_export, target_hostname)
+            events, bucket_newest = collect_events(target_bucket.records, config, last_sync)
             if not events:
                 continue
 
             ensure_activitywatch_bucket(
                 config.activitywatch_base_url,
-                bucket_export,
-                config.activitywatch_hostname,
+                target_bucket,
+                target_hostname,
                 config.request_timeout_seconds,
             )
             bucket_endpoint = build_activitywatch_urls(
                 config.activitywatch_base_url,
-                bucket_export.bucket_id,
+                target_bucket.bucket_id,
             )[1]
             post_events(bucket_endpoint, events, config.request_timeout_seconds)
             total_events += len(events)
             if bucket_newest is not None and (newest_timestamp is None or bucket_newest > newest_timestamp):
                 newest_timestamp = bucket_newest
-            log(f"Imported {len(events)} event(s) into bucket {bucket_export.bucket_id}.")
+            log(
+                f"Imported {len(events)} event(s) from {bucket_export.bucket_id} "
+                f"into bucket {target_bucket.bucket_id} on host {target_hostname}."
+            )
 
         if total_events == 0:
             if last_sync is None:

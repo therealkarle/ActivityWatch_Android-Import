@@ -36,12 +36,12 @@ The setup relies on automated HTTP requests and file operations triggered at spe
 
 ## 3. Data Structure & Validation
 
-The exported data is written to the target bucket `aw-watcher-android-test`. A successful pass validates the following structure:
+The exported data is imported bucket-by-bucket. Android-specific source bucket IDs are rewritten to non-Android target buckets so ActivityWatch does not create a second `(Android)` device entry for the same hostname.
 
 * **Format:** The exported file should be a raw ActivityWatch export JSON, or a flattened list of event objects containing ISO timestamps (`timestamp`) along with the respective app and window metadata.
 * **Chronology:** Data is captured seamlessly up to the execution timestamp.
 * **Incremental Sync:** The PC importer uses a local tracking file (`last_sync.txt`) to process *only* events with a timestamp strictly greater than the last recorded entry, completely preventing duplicate events in the bucket.
-* **Bucket Creation:** The importer creates the target bucket (`aw-watcher-android-test`) automatically on first run if it is missing, using the documented ActivityWatch REST route under `/api/0`.
+* **Bucket Creation:** The importer creates each target bucket automatically on first run if it is missing, using the documented ActivityWatch REST route under `/api/0`.
 
 ---
 
@@ -50,7 +50,7 @@ The exported data is written to the target bucket `aw-watcher-android-test`. A s
 * Set `google_drive_folder_id` to the Drive folder ID from the shared folder URL.
 * Set `google_drive_service_account_file` to the path of the service account JSON key on the PC.
 * Set `activitywatch_base_url` to the host and port of your ActivityWatch server, for example `http://localhost:5600` or `http://192.168.1.50:5600`.
-* Set `activitywatch_hostname` if you want to override the hostname stored in created bucket metadata.
+* `activitywatch_hostname` is only used as a fallback when the exported bucket metadata does not contain a usable hostname.
 * Make sure the uploaded export file is a regular file, not a Google Docs document.
 
 ---
