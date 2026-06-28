@@ -5,6 +5,7 @@ rem Deletes the ActivityWatch buckets created by the importer for FloneA54.
 rem Adjust the bucket names here if your hostname changes.
 
 set "AW_BASE_URL=http://localhost:5600"
+set "LAST_SYNC_FILE=last_sync.txt"
 
 for %%B in (
     aw-import-unlock_FloneA54
@@ -15,6 +16,15 @@ for %%B in (
     curl -f -sS -X DELETE "%AW_BASE_URL%/api/0/buckets/%%B?force=1"
     if errorlevel 1 (
         echo Failed to delete bucket %%B.
+        exit /b 1
+    )
+)
+
+if exist "%LAST_SYNC_FILE%" (
+    echo Deleting %LAST_SYNC_FILE% ...
+    del /f /q "%LAST_SYNC_FILE%"
+    if errorlevel 1 (
+        echo Failed to delete %LAST_SYNC_FILE%.
         exit /b 1
     )
 )

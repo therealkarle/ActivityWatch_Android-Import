@@ -9,7 +9,7 @@ ActivityWatch Google Drive Import downloads the newest matching file from a shar
 It is designed for:
 - people who want to export ActivityWatch data from Android to Google Drive
 - anyone who wants a simple, incremental import into a local ActivityWatch instance
-- users who want AFK buckets with configurable `not-afk` and `afk` spans for imported window buckets
+- users who want AFK buckets with configurable `not-afk` spans and AFK gap limits for imported window buckets
 - GitHub repositories that need clear, reproducible setup instructions
 
 ## Main Features
@@ -19,7 +19,7 @@ It is designed for:
 - Imports ActivityWatch export JSON, nested bucket exports, or flattened event lists.
 - Supports incremental sync through `last_sync.txt`.
 - Creates missing ActivityWatch buckets automatically.
-- Can create `aw-watcher-afk_*` buckets with `not-afk` and `afk` spans for selected window imports.
+- Can create `aw-watcher-afk_*` buckets with `not-afk` spans and configurable AFK gap limits for selected window imports.
 - Can keep or skip the original bucket when AFK duplication is enabled.
 - Accepts both JSON exports and plain-text timestamped event logs.
 - Supports configurable timestamp, duration, and payload field names.
@@ -81,7 +81,7 @@ For each parsed record the script:
 
 ### AFK Duplication
 
-You can list bucket IDs in `afk_duplicate_bucket_ids` to create a matching `aw-watcher-afk_*` bucket. For window buckets, the script writes `not-afk` spans and inserts `afk` gaps when the idle window is exceeded.
+You can list bucket IDs in `afk_duplicate_bucket_ids` to create a matching `aw-watcher-afk_*` bucket. For window buckets, the script writes `not-afk` spans and inserts `afk` gaps only when the gap between activity blocks stays within `afk_duplicate_max_afk_gap_seconds`.
 
 ### Original Bucket Control
 
@@ -323,7 +323,8 @@ The application reads `config.json` from the repository root. Keep this file out
 | `activitywatch_hostname` | string | Fallback hostname used when imported metadata does not include one. |
 | `afk_duplicate_bucket_ids` | array of strings | Bucket IDs that should also create an AFK bucket with `not-afk` and `afk` spans. |
 | `afk_duplicate_upload_original_bucket` | boolean | Upload the original bucket as well as the AFK copy. |
-| `afk_duplicate_idle_gap_seconds` | integer | Idle gap, in seconds, before the AFK span ends. Default: `120`. |
+| `afk_duplicate_idle_gap_seconds` | integer | Idle gap, in seconds, before the AFK span starts. Default: `120`. |
+| `afk_duplicate_max_afk_gap_seconds` | integer | Maximum AFK gap, in seconds, to emit between activity blocks. Default: `900`. |
 | `timestamp_fields` | array of strings | Candidate field names for timestamps. |
 | `duration_fields` | array of strings | Candidate field names for durations. |
 | `payload_fields` | array of strings | Candidate field names for nested payload objects. |
@@ -343,6 +344,7 @@ The application reads `config.json` from the repository root. Keep this file out
   "afk_duplicate_bucket_ids": ["aw-watcher-window_FloneA54"],
   "afk_duplicate_upload_original_bucket": true,
   "afk_duplicate_idle_gap_seconds": 120,
+  "afk_duplicate_max_afk_gap_seconds": 900,
   "timestamp_fields": ["timestamp", "time", "datetime", "date", "start", "created_at"],
   "duration_fields": ["duration", "length", "seconds"],
   "payload_fields": ["data", "event", "payload"],
@@ -376,6 +378,7 @@ If you want to remove the buckets created by the importer, run the batch file `d
 - `aw-watcher-window_FloneA54`
 
 The script uses the ActivityWatch REST delete route with `force=1`.
+It also removes `last_sync.txt` so the next import starts from a clean state.
 
 ## ActivityWatch Buckets
 
@@ -387,7 +390,7 @@ The importer creates the target bucket on first use if it is missing. This keeps
 
 Android window exports are treated specially:
 - the original imported bucket keeps the event data
-- the AFK mirror bucket contains `not-afk` and `afk` spans based on the configured idle gap
+- the AFK mirror bucket contains `not-afk` spans and only short `afk` gaps within the configured limit
 
 ### Duplicate Protection
 

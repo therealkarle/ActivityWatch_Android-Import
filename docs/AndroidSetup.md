@@ -54,7 +54,8 @@ The exported data is imported bucket-by-bucket. Android-specific source bucket I
 * Use `afk_duplicate_bucket_ids` to create an AFK bucket such as `aw-watcher-afk_FloneA54`. For Android window activity, point this at `aw-watcher-window_FloneA54`.
 * Set `afk_duplicate_upload_original_bucket` to `true` if the original bucket should still be uploaded alongside the AFK copy, or `false` if only the AFK bucket should receive the `not-afk` spans.
 * Set `afk_duplicate_idle_gap_seconds` to control how long the `not-afk` span lasts before an `afk` gap is inserted. The default is `120`.
-* Android window imports are written with `duration = 0` on the original bucket and the AFK bucket uses the configured idle gap between `not-afk` and `afk` spans.
+* Set `afk_duplicate_max_afk_gap_seconds` to limit how large an AFK gap may be before it is skipped. The default is `900`.
+* Android window imports are written with `duration = 0` on the original bucket and the AFK bucket uses the configured idle gap, but only emits AFK gaps up to the configured maximum.
 * Make sure the uploaded export file is a regular file, not a Google Docs document.
 
 ---

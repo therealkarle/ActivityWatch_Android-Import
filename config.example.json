@@ -12,6 +12,7 @@
   ],
   "afk_duplicate_upload_original_bucket": true,
   "afk_duplicate_idle_gap_seconds": 120,
+  "afk_duplicate_max_afk_gap_seconds": 900,
   "timestamp_fields": [
     "timestamp",
     "time",

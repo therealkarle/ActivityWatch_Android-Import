@@ -27,6 +27,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "afk_duplicate_bucket_ids": [],
     "afk_duplicate_upload_original_bucket": True,
     "afk_duplicate_idle_gap_seconds": 120,
+    "afk_duplicate_max_afk_gap_seconds": 900,
     "timestamp_fields": ["timestamp", "time", "datetime", "date", "start", "created_at"],
     "duration_fields": ["duration", "length", "seconds"],
     "payload_fields": ["data", "event", "payload"],
@@ -55,6 +56,7 @@ class AppConfig:
     afk_duplicate_bucket_ids: list[str]
     afk_duplicate_upload_original_bucket: bool
     afk_duplicate_idle_gap_seconds: int
+    afk_duplicate_max_afk_gap_seconds: int
     timestamp_fields: list[str]
     duration_fields: list[str]
     payload_fields: list[str]
@@ -131,6 +133,9 @@ def build_config() -> AppConfig:
     afk_duplicate_idle_gap_seconds = raw.get("afk_duplicate_idle_gap_seconds", WINDOW_ACTIVITY_IDLE_GAP_SECONDS)
     if not isinstance(afk_duplicate_idle_gap_seconds, int) or afk_duplicate_idle_gap_seconds <= 0:
         raise ValueError("afk_duplicate_idle_gap_seconds must be a positive integer.")
+    afk_duplicate_max_afk_gap_seconds = raw.get("afk_duplicate_max_afk_gap_seconds", 900)
+    if not isinstance(afk_duplicate_max_afk_gap_seconds, int) or afk_duplicate_max_afk_gap_seconds <= 0:
+        raise ValueError("afk_duplicate_max_afk_gap_seconds must be a positive integer.")
 
     return AppConfig(
         google_drive_folder_id=google_drive_folder_id,
@@ -142,6 +147,7 @@ def build_config() -> AppConfig:
         afk_duplicate_bucket_ids=[item.strip() for item in afk_duplicate_bucket_ids],
         afk_duplicate_upload_original_bucket=afk_duplicate_upload_original_bucket,
         afk_duplicate_idle_gap_seconds=afk_duplicate_idle_gap_seconds,
+        afk_duplicate_max_afk_gap_seconds=afk_duplicate_max_afk_gap_seconds,
         timestamp_fields=[str(item) for item in raw.get("timestamp_fields", []) if str(item)],
         duration_fields=[str(item) for item in raw.get("duration_fields", []) if str(item)],
         payload_fields=[str(item) for item in raw.get("payload_fields", []) if str(item)],
@@ -634,7 +640,11 @@ def is_window_source_bucket(bucket: ExportBucket) -> bool:
     return bucket.bucket_type == "currentwindow" or bucket.bucket_id.lower().startswith("aw-watcher-android-")
 
 
-def build_afk_duplicate_events(window_events: list[dict[str, Any]], idle_gap_seconds: int) -> list[dict[str, Any]]:
+def build_afk_duplicate_events(
+    window_events: list[dict[str, Any]],
+    idle_gap_seconds: int,
+    max_afk_gap_seconds: int,
+) -> list[dict[str, Any]]:
     if not window_events:
         return []
 
@@ -655,7 +665,11 @@ def build_afk_duplicate_events(window_events: list[dict[str, Any]], idle_gap_sec
                     "data": {"status": "not-afk"},
                 }
             )
-        if next_start is not None and next_start > not_afk_end:
+        if (
+            next_start is not None
+            and next_start > not_afk_end
+            and (next_start - not_afk_end).total_seconds() <= max_afk_gap_seconds
+        ):
             afk_events.append(
                 {
                     "timestamp": format_timestamp(not_afk_end),
@@ -746,7 +760,15 @@ def main() -> int:
 
             if should_duplicate_as_afk(target_bucket.bucket_id, afk_duplicate_bucket_ids):
                 afk_bucket = build_afk_duplicate_bucket(target_bucket)
-                afk_events = build_afk_duplicate_events(source_events, config.afk_duplicate_idle_gap_seconds) if is_window_bucket else source_events
+                afk_events = (
+                    build_afk_duplicate_events(
+                        source_events,
+                        config.afk_duplicate_idle_gap_seconds,
+                        config.afk_duplicate_max_afk_gap_seconds,
+                    )
+                    if is_window_bucket
+                    else source_events
+                )
                 ensure_activitywatch_bucket(
                     config.activitywatch_base_url,
                     afk_bucket,
