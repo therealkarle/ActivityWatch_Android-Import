@@ -52,6 +52,7 @@ The exported data is imported bucket-by-bucket. Android-specific source bucket I
 * Set `activitywatch_base_url` to the host and port of your ActivityWatch server, for example `http://localhost:5600` or `http://192.168.1.50:5600`.
 * `activitywatch_hostname` is only used as a fallback when the exported bucket metadata does not contain a usable hostname.
 * Use `afk_duplicate_bucket_ids` to mirror selected imported buckets into an AFK bucket such as `aw-watcher-afk_FloneA54`.
+* Set `afk_duplicate_upload_original_bucket` to `true` if the original bucket should still be uploaded alongside the AFK copy, or `false` if only the AFK bucket should receive the events.
 * Make sure the uploaded export file is a regular file, not a Google Docs document.
 
 ---

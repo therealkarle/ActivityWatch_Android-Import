@@ -20,6 +20,7 @@ class ConfigTests(unittest.TestCase):
                         "google_drive_folder_id": "folder-id",
                         "google_drive_service_account_file": "service-account.json",
                         "afk_duplicate_bucket_ids": ["aw-import-unlock_FloneA54"],
+                        "afk_duplicate_upload_original_bucket": False,
                     }
                 ),
                 encoding="utf-8",
@@ -29,6 +30,7 @@ class ConfigTests(unittest.TestCase):
                 config = aw.build_config()
 
         self.assertEqual(config.afk_duplicate_bucket_ids, ["aw-import-unlock_FloneA54"])
+        self.assertFalse(config.afk_duplicate_upload_original_bucket)
 
 
 class AfkBucketTests(unittest.TestCase):
@@ -60,6 +62,30 @@ class AfkBucketTests(unittest.TestCase):
             aw.should_duplicate_as_afk(
                 "aw-import-activity_FloneA54",
                 ["aw-import-unlock_FloneA54"],
+            )
+        )
+
+    def test_should_upload_original_bucket_respects_toggle(self) -> None:
+        configured = {"aw-import-unlock_FloneA54"}
+        self.assertFalse(
+            aw.should_upload_original_bucket(
+                "aw-import-unlock_FloneA54",
+                configured,
+                False,
+            )
+        )
+        self.assertTrue(
+            aw.should_upload_original_bucket(
+                "aw-import-unlock_FloneA54",
+                configured,
+                True,
+            )
+        )
+        self.assertTrue(
+            aw.should_upload_original_bucket(
+                "aw-import-activity_FloneA54",
+                configured,
+                False,
             )
         )
 
