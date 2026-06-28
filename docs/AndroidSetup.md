@@ -51,9 +51,9 @@ The exported data is imported bucket-by-bucket. Android-specific source bucket I
 * Set `google_drive_service_account_file` to the path of the service account JSON key on the PC.
 * Set `activitywatch_base_url` to the host and port of your ActivityWatch server, for example `http://localhost:5600` or `http://192.168.1.50:5600`.
 * `activitywatch_hostname` is only used as a fallback when the exported bucket metadata does not contain a usable hostname.
-* Use `afk_duplicate_bucket_ids` to mirror selected imported buckets into an AFK bucket such as `aw-watcher-afk_FloneA54`. For Android window activity, point this at `aw-watcher-window_FloneA54`.
-* Set `afk_duplicate_upload_original_bucket` to `true` if the original bucket should still be uploaded alongside the AFK copy, or `false` if only the AFK bucket should receive the events.
-* Android window imports are written with `duration = 0` on the original bucket and are converted into `not-afk` spans in the AFK bucket using a 2-minute idle gap.
+* Use `afk_duplicate_bucket_ids` to create an AFK bucket such as `aw-watcher-afk_FloneA54`. For Android window activity, point this at `aw-watcher-window_FloneA54`.
+* Set `afk_duplicate_upload_original_bucket` to `true` if the original bucket should still be uploaded alongside the AFK copy, or `false` if only the AFK bucket should receive the `not-afk` spans.
+* Android window imports are written with `duration = 0` on the original bucket. The AFK bucket receives only `not-afk` spans and no `afk` gap events.
 * Make sure the uploaded export file is a regular file, not a Google Docs document.
 
 ---

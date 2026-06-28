@@ -9,7 +9,7 @@ ActivityWatch Google Drive Import downloads the newest matching file from a shar
 It is designed for:
 - people who want to export ActivityWatch data from Android to Google Drive
 - anyone who wants a simple, incremental import into a local ActivityWatch instance
-- users who want AFK duplication for imported window buckets
+- users who want AFK buckets with only `not-afk` spans for imported window buckets
 - GitHub repositories that need clear, reproducible setup instructions
 
 ## Main Features
@@ -19,7 +19,7 @@ It is designed for:
 - Imports ActivityWatch export JSON, nested bucket exports, or flattened event lists.
 - Supports incremental sync through `last_sync.txt`.
 - Creates missing ActivityWatch buckets automatically.
-- Can mirror selected buckets into `aw-watcher-afk_*` buckets.
+- Can create `aw-watcher-afk_*` buckets with only `not-afk` spans for selected window imports.
 - Can keep or skip the original bucket when AFK duplication is enabled.
 - Accepts both JSON exports and plain-text timestamped event logs.
 - Supports configurable timestamp, duration, and payload field names.
@@ -81,11 +81,11 @@ For each parsed record the script:
 
 ### AFK Duplication
 
-You can list bucket IDs in `afk_duplicate_bucket_ids` to mirror them into a matching `aw-watcher-afk_*` bucket. For window buckets, the script converts the imported events into alternating `not-afk` and `afk` spans using a fixed 2-minute idle gap.
+You can list bucket IDs in `afk_duplicate_bucket_ids` to create a matching `aw-watcher-afk_*` bucket. For window buckets, the script writes only `not-afk` spans and skips `afk` gap events.
 
 ### Original Bucket Control
 
-If `afk_duplicate_upload_original_bucket` is `true`, the original bucket is uploaded in addition to the AFK copy. If it is `false`, only the AFK bucket gets the events.
+If `afk_duplicate_upload_original_bucket` is `true`, the original bucket is uploaded in addition to the AFK copy. If it is `false`, only the AFK bucket gets the `not-afk` spans.
 
 ### Hostname Handling
 
@@ -321,7 +321,7 @@ The application reads `config.json` from the repository root. Keep this file out
 | `last_sync_file` | string | Local file that stores the newest imported timestamp. |
 | `activitywatch_base_url` | string | Base URL of your ActivityWatch server. Default: `http://localhost:5600`. |
 | `activitywatch_hostname` | string | Fallback hostname used when imported metadata does not include one. |
-| `afk_duplicate_bucket_ids` | array of strings | Bucket IDs that should also be mirrored into AFK buckets. |
+| `afk_duplicate_bucket_ids` | array of strings | Bucket IDs that should also create an AFK bucket with only `not-afk` spans. |
 | `afk_duplicate_upload_original_bucket` | boolean | Upload the original bucket as well as the AFK copy. |
 | `timestamp_fields` | array of strings | Candidate field names for timestamps. |
 | `duration_fields` | array of strings | Candidate field names for durations. |
@@ -375,7 +375,7 @@ The importer creates the target bucket on first use if it is missing. This keeps
 
 Android window exports are treated specially:
 - the original imported bucket keeps the event data
-- the AFK mirror bucket is built from the window activity and uses a not-afk/afk timeline
+- the AFK mirror bucket contains only `not-afk` spans
 
 ### Duplicate Protection
 
@@ -452,7 +452,7 @@ The test suite covers:
 
 - Add the exact bucket ID to `afk_duplicate_bucket_ids`.
 - Check whether the source bucket is recognized as a window bucket.
-- Remember that the script only builds AFK spans from window activity, not from every export type.
+- Remember that the script only creates AFK buckets for exact matches in `afk_duplicate_bucket_ids`.
 
 ## Security and Privacy
 

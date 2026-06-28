@@ -624,18 +624,21 @@ def collect_events(
     return events, newest
 
 
-def build_afk_state_events(window_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def is_window_source_bucket(bucket: ExportBucket) -> bool:
+    return bucket.bucket_type == "currentwindow" or bucket.bucket_id.lower().startswith("aw-watcher-android-")
+
+
+def build_afk_duplicate_events(window_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not window_events:
         return []
 
     ordered = sorted(window_events, key=lambda item: item["timestamp"])
     afk_events: list[dict[str, Any]] = []
-    idle_gap = WINDOW_ACTIVITY_IDLE_GAP_SECONDS
 
     for index, event in enumerate(ordered):
         start = parse_timestamp(event["timestamp"])
         next_start = parse_timestamp(ordered[index + 1]["timestamp"]) if index + 1 < len(ordered) else None
-        not_afk_end = start + timedelta(seconds=idle_gap)
+        not_afk_end = start + timedelta(seconds=WINDOW_ACTIVITY_IDLE_GAP_SECONDS)
         if next_start is not None and next_start < not_afk_end:
             not_afk_end = next_start
         if not_afk_end > start:
@@ -646,20 +649,8 @@ def build_afk_state_events(window_events: list[dict[str, Any]]) -> list[dict[str
                     "data": {"status": "not-afk"},
                 }
             )
-        if next_start is not None and next_start > not_afk_end:
-            afk_events.append(
-                {
-                    "timestamp": format_timestamp(not_afk_end),
-                    "duration": (next_start - not_afk_end).total_seconds(),
-                    "data": {"status": "afk"},
-                }
-            )
 
     return afk_events
-
-
-def is_window_source_bucket(bucket: ExportBucket) -> bool:
-    return bucket.bucket_type == "currentwindow" or bucket.bucket_id.lower().startswith("aw-watcher-android-")
 
 
 def post_events(endpoint: str, events: list[dict[str, Any]], timeout_seconds: int) -> None:
@@ -726,7 +717,6 @@ def main() -> int:
         for bucket_export in bucket_exports:
             target_hostname = resolve_bucket_hostname(bucket_export.hostname, config.activitywatch_hostname)
             target_bucket = normalize_import_bucket(bucket_export, target_hostname)
-            is_window_bucket = is_window_source_bucket(bucket_export)
             source_events, bucket_newest = collect_events(
                 target_bucket.records,
                 config,
@@ -738,21 +728,22 @@ def main() -> int:
             if bucket_newest is not None and (newest_timestamp is None or bucket_newest > newest_timestamp):
                 newest_timestamp = bucket_newest
             uploaded_any = False
+            is_window_bucket = is_window_source_bucket(bucket_export)
 
             if should_duplicate_as_afk(target_bucket.bucket_id, afk_duplicate_bucket_ids):
                 afk_bucket = build_afk_duplicate_bucket(target_bucket)
-                afk_events = build_afk_state_events(source_events) if is_window_bucket else source_events
+                afk_events = build_afk_duplicate_events(source_events) if is_window_bucket else source_events
                 ensure_activitywatch_bucket(
                     config.activitywatch_base_url,
                     afk_bucket,
                     target_hostname,
                     config.request_timeout_seconds,
                 )
-                afk_bucket_endpoint = build_activitywatch_urls(
-                    config.activitywatch_base_url,
-                    afk_bucket.bucket_id,
-                )[1]
                 if afk_events:
+                    afk_bucket_endpoint = build_activitywatch_urls(
+                        config.activitywatch_base_url,
+                        afk_bucket.bucket_id,
+                    )[1]
                     post_events(afk_bucket_endpoint, afk_events, config.request_timeout_seconds)
                     uploaded_any = True
                     log(

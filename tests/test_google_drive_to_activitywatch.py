@@ -51,6 +51,19 @@ class AfkBucketTests(unittest.TestCase):
         self.assertEqual(duplicated.records, bucket.records)
         self.assertEqual(duplicated.bucket_type, "afk")
 
+    def test_build_afk_duplicate_events_only_emits_not_afk_spans(self) -> None:
+        window_events = [
+            {"timestamp": "2026-06-28T08:00:00Z", "duration": 0.0, "data": {}},
+            {"timestamp": "2026-06-28T08:05:00Z", "duration": 0.0, "data": {}},
+        ]
+
+        afk_events = aw.build_afk_duplicate_events(window_events)
+
+        self.assertEqual(len(afk_events), 2)
+        self.assertTrue(all(event["data"]["status"] == "not-afk" for event in afk_events))
+        self.assertEqual(afk_events[0]["duration"], 120.0)
+        self.assertEqual(afk_events[1]["duration"], 120.0)
+
     def test_should_duplicate_as_afk_matches_exact_bucket_id(self) -> None:
         self.assertTrue(
             aw.should_duplicate_as_afk(
@@ -116,22 +129,6 @@ class AfkBucketTests(unittest.TestCase):
         self.assertTrue(all(event["duration"] == 999.0 for event in events))
         self.assertEqual(aw.parse_timestamp(events[0]["timestamp"]), aw.parse_timestamp("2026-06-28T08:00:00Z"))
         self.assertEqual(newest, aw.parse_timestamp("2026-06-28T08:01:00Z"))
-
-    def test_build_afk_state_events_from_window_events(self) -> None:
-        window_events = [
-            {"timestamp": "2026-06-28T08:00:00Z", "duration": 0.0, "data": {}},
-            {"timestamp": "2026-06-28T08:05:00Z", "duration": 0.0, "data": {}},
-        ]
-
-        afk_events = aw.build_afk_state_events(window_events)
-
-        self.assertEqual(len(afk_events), 3)
-        self.assertEqual(afk_events[0]["data"]["status"], "not-afk")
-        self.assertEqual(afk_events[0]["duration"], 120.0)
-        self.assertEqual(afk_events[1]["data"]["status"], "afk")
-        self.assertEqual(afk_events[1]["duration"], 180.0)
-        self.assertEqual(afk_events[2]["data"]["status"], "not-afk")
-        self.assertEqual(afk_events[2]["duration"], 120.0)
 
 
 if __name__ == "__main__":
