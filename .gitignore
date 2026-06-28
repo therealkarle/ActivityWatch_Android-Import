@@ -1,5 +1,8 @@
 config.json
+env
 last_sync.txt
 
 __pycache__
 .agents
+
+
