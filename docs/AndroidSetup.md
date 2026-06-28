@@ -51,6 +51,7 @@ The exported data is imported bucket-by-bucket. Android-specific source bucket I
 * Set `google_drive_service_account_file` to the path of the service account JSON key on the PC.
 * Set `activitywatch_base_url` to the host and port of your ActivityWatch server, for example `http://localhost:5600` or `http://192.168.1.50:5600`.
 * `activitywatch_hostname` is only used as a fallback when the exported bucket metadata does not contain a usable hostname.
+* Use `afk_duplicate_bucket_ids` to mirror selected imported buckets into an AFK bucket such as `aw-watcher-afk_FloneA54`.
 * Make sure the uploaded export file is a regular file, not a Google Docs document.
 
 ---

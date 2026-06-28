@@ -24,6 +24,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "last_sync_file": "last_sync.txt",
     "activitywatch_base_url": "http://localhost:5600",
     "activitywatch_hostname": "",
+    "afk_duplicate_bucket_ids": [],
     "timestamp_fields": ["timestamp", "time", "datetime", "date", "start", "created_at"],
     "duration_fields": ["duration", "length", "seconds"],
     "payload_fields": ["data", "event", "payload"],
@@ -47,6 +48,7 @@ class AppConfig:
     last_sync_file: Path
     activitywatch_base_url: str
     activitywatch_hostname: str
+    afk_duplicate_bucket_ids: list[str]
     timestamp_fields: list[str]
     duration_fields: list[str]
     payload_fields: list[str]
@@ -111,6 +113,12 @@ def build_config() -> AppConfig:
 
     activitywatch_base_url = str(raw.get("activitywatch_base_url", "http://localhost:5600")).strip() or "http://localhost:5600"
     activitywatch_hostname = str(raw.get("activitywatch_hostname", "")).strip()
+    afk_duplicate_bucket_ids = raw.get("afk_duplicate_bucket_ids", [])
+    if (
+        not isinstance(afk_duplicate_bucket_ids, list)
+        or any(not isinstance(item, str) or not item.strip() for item in afk_duplicate_bucket_ids)
+    ):
+        raise ValueError("afk_duplicate_bucket_ids must be a list of non-empty strings.")
 
     return AppConfig(
         google_drive_folder_id=google_drive_folder_id,
@@ -119,6 +127,7 @@ def build_config() -> AppConfig:
         last_sync_file=last_sync_file,
         activitywatch_base_url=activitywatch_base_url,
         activitywatch_hostname=activitywatch_hostname,
+        afk_duplicate_bucket_ids=[item.strip() for item in afk_duplicate_bucket_ids],
         timestamp_fields=[str(item) for item in raw.get("timestamp_fields", []) if str(item)],
         duration_fields=[str(item) for item in raw.get("duration_fields", []) if str(item)],
         payload_fields=[str(item) for item in raw.get("payload_fields", []) if str(item)],
@@ -224,6 +233,22 @@ def normalize_import_bucket(bucket: ExportBucket, hostname: str) -> ExportBucket
         bucket_type=bucket.bucket_type,
         client="google_drive_to_activitywatch",
         hostname=hostname,
+        data=bucket.data,
+        records=bucket.records,
+    )
+
+
+def should_duplicate_as_afk(bucket_id: str, afk_duplicate_bucket_ids: set[str]) -> bool:
+    return not bucket_id.startswith("aw-watcher-afk_") and bucket_id in afk_duplicate_bucket_ids
+
+
+def build_afk_duplicate_bucket(bucket: ExportBucket) -> ExportBucket:
+    host_part = bucket_safe_hostname(bucket.hostname)
+    return ExportBucket(
+        bucket_id=f"aw-watcher-afk_{host_part}",
+        bucket_type="afk",
+        client=bucket.client,
+        hostname=bucket.hostname,
         data=bucket.data,
         records=bucket.records,
     )
@@ -635,6 +660,7 @@ def main() -> int:
 
         total_events = 0
         newest_timestamp = last_sync
+        afk_duplicate_bucket_ids = set(config.afk_duplicate_bucket_ids)
         for bucket_export in bucket_exports:
             target_hostname = resolve_bucket_hostname(bucket_export.hostname, config.activitywatch_hostname)
             target_bucket = normalize_import_bucket(bucket_export, target_hostname)
@@ -660,6 +686,24 @@ def main() -> int:
                 f"Imported {len(events)} event(s) from {bucket_export.bucket_id} "
                 f"into bucket {target_bucket.bucket_id} on host {target_hostname}."
             )
+
+            if should_duplicate_as_afk(target_bucket.bucket_id, afk_duplicate_bucket_ids):
+                afk_bucket = build_afk_duplicate_bucket(target_bucket)
+                ensure_activitywatch_bucket(
+                    config.activitywatch_base_url,
+                    afk_bucket,
+                    target_hostname,
+                    config.request_timeout_seconds,
+                )
+                afk_bucket_endpoint = build_activitywatch_urls(
+                    config.activitywatch_base_url,
+                    afk_bucket.bucket_id,
+                )[1]
+                post_events(afk_bucket_endpoint, events, config.request_timeout_seconds)
+                log(
+                    f"Duplicated {len(events)} event(s) from {target_bucket.bucket_id} "
+                    f"into AFK bucket {afk_bucket.bucket_id}."
+                )
 
         if total_events == 0:
             if last_sync is None:

@@ -7,6 +7,9 @@
   "last_sync_file": "last_sync.txt",
   "activitywatch_base_url": "http://localhost:5600",
   "activitywatch_hostname": "FloneA54",
+  "afk_duplicate_bucket_ids": [
+    "aw-import-unlock_FloneA54"
+  ],
   "timestamp_fields": [
     "timestamp",
     "time",
