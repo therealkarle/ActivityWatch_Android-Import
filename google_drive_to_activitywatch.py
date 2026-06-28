@@ -7,7 +7,7 @@ import re
 import sys
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 from urllib import error, request
@@ -32,6 +32,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "encoding": "utf-8",
     "request_timeout_seconds": 15,
 }
+
+WINDOW_ACTIVITY_IDLE_GAP_SECONDS = 120
 
 ISO_LIKE_PREFIX = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:\d{2})?)"
@@ -566,7 +568,7 @@ def pick_first(value: dict[str, Any], keys: Iterable[str]) -> Any:
     return None
 
 
-def normalize_event(record: dict[str, Any], config: AppConfig) -> dict[str, Any] | None:
+def normalize_event(record: dict[str, Any], config: AppConfig, force_zero_duration: bool = False) -> dict[str, Any] | None:
     timestamp_value = pick_first(record, config.timestamp_fields) or record.get("timestamp")
     if timestamp_value is None:
         return None
@@ -591,7 +593,9 @@ def normalize_event(record: dict[str, Any], config: AppConfig) -> dict[str, Any]
         "timestamp": format_timestamp(timestamp),
         "data": payload,
     }
-    if duration_value is not None:
+    if force_zero_duration:
+        event["duration"] = 0.0
+    elif duration_value is not None:
         try:
             event["duration"] = float(duration_value)
         except (TypeError, ValueError):
@@ -601,11 +605,16 @@ def normalize_event(record: dict[str, Any], config: AppConfig) -> dict[str, Any]
     return event
 
 
-def collect_events(records: list[dict[str, Any]], config: AppConfig, last_sync: datetime | None) -> tuple[list[dict[str, Any]], datetime | None]:
+def collect_events(
+    records: list[dict[str, Any]],
+    config: AppConfig,
+    last_sync: datetime | None,
+    force_zero_duration: bool = False,
+) -> tuple[list[dict[str, Any]], datetime | None]:
     events: list[dict[str, Any]] = []
     newest: datetime | None = last_sync
     for record in records:
-        event = normalize_event(record, config)
+        event = normalize_event(record, config, force_zero_duration=force_zero_duration)
         if event is None:
             continue
         timestamp = parse_timestamp(event["timestamp"])
@@ -616,6 +625,44 @@ def collect_events(records: list[dict[str, Any]], config: AppConfig, last_sync: 
             newest = timestamp
     events.sort(key=lambda item: item["timestamp"])
     return events, newest
+
+
+def build_afk_state_events(window_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not window_events:
+        return []
+
+    ordered = sorted(window_events, key=lambda item: item["timestamp"])
+    afk_events: list[dict[str, Any]] = []
+    idle_gap = WINDOW_ACTIVITY_IDLE_GAP_SECONDS
+
+    for index, event in enumerate(ordered):
+        start = parse_timestamp(event["timestamp"])
+        next_start = parse_timestamp(ordered[index + 1]["timestamp"]) if index + 1 < len(ordered) else None
+        not_afk_end = start + timedelta(seconds=idle_gap)
+        if next_start is not None and next_start < not_afk_end:
+            not_afk_end = next_start
+        if not_afk_end > start:
+            afk_events.append(
+                {
+                    "timestamp": format_timestamp(start),
+                    "duration": (not_afk_end - start).total_seconds(),
+                    "data": {"status": "not-afk"},
+                }
+            )
+        if next_start is not None and next_start > not_afk_end:
+            afk_events.append(
+                {
+                    "timestamp": format_timestamp(not_afk_end),
+                    "duration": (next_start - not_afk_end).total_seconds(),
+                    "data": {"status": "afk"},
+                }
+            )
+
+    return afk_events
+
+
+def is_window_source_bucket(bucket: ExportBucket) -> bool:
+    return bucket.bucket_type == "currentwindow" or bucket.bucket_id.lower().startswith("aw-watcher-android-")
 
 
 def post_events(endpoint: str, events: list[dict[str, Any]], timeout_seconds: int) -> None:
@@ -682,8 +729,14 @@ def main() -> int:
         for bucket_export in bucket_exports:
             target_hostname = resolve_bucket_hostname(bucket_export.hostname, config.activitywatch_hostname)
             target_bucket = normalize_import_bucket(bucket_export, target_hostname)
-            events, bucket_newest = collect_events(target_bucket.records, config, last_sync)
-            if not events:
+            is_window_bucket = is_window_source_bucket(bucket_export)
+            source_events, bucket_newest = collect_events(
+                target_bucket.records,
+                config,
+                last_sync,
+                force_zero_duration=is_window_bucket,
+            )
+            if not source_events:
                 continue
 
             if bucket_newest is not None and (newest_timestamp is None or bucket_newest > newest_timestamp):
@@ -692,6 +745,7 @@ def main() -> int:
 
             if should_duplicate_as_afk(target_bucket.bucket_id, afk_duplicate_bucket_ids):
                 afk_bucket = build_afk_duplicate_bucket(target_bucket)
+                afk_events = build_afk_state_events(source_events) if is_window_bucket else source_events
                 ensure_activitywatch_bucket(
                     config.activitywatch_base_url,
                     afk_bucket,
@@ -702,12 +756,13 @@ def main() -> int:
                     config.activitywatch_base_url,
                     afk_bucket.bucket_id,
                 )[1]
-                post_events(afk_bucket_endpoint, events, config.request_timeout_seconds)
-                uploaded_any = True
-                log(
-                    f"Duplicated {len(events)} event(s) from {target_bucket.bucket_id} "
-                    f"into AFK bucket {afk_bucket.bucket_id}."
-                )
+                if afk_events:
+                    post_events(afk_bucket_endpoint, afk_events, config.request_timeout_seconds)
+                    uploaded_any = True
+                    log(
+                        f"Duplicated {len(afk_events)} event(s) from {target_bucket.bucket_id} "
+                        f"into AFK bucket {afk_bucket.bucket_id}."
+                    )
 
             if should_upload_original_bucket(
                 target_bucket.bucket_id,
@@ -724,15 +779,15 @@ def main() -> int:
                     config.activitywatch_base_url,
                     target_bucket.bucket_id,
                 )[1]
-                post_events(bucket_endpoint, events, config.request_timeout_seconds)
+                post_events(bucket_endpoint, source_events, config.request_timeout_seconds)
                 uploaded_any = True
                 log(
-                    f"Imported {len(events)} event(s) from {bucket_export.bucket_id} "
+                    f"Imported {len(source_events)} event(s) from {bucket_export.bucket_id} "
                     f"into bucket {target_bucket.bucket_id} on host {target_hostname}."
                 )
 
             if uploaded_any:
-                total_events += len(events)
+                total_events += len(source_events)
 
         if total_events == 0:
             if last_sync is None:
