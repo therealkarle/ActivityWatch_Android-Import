@@ -5,7 +5,8 @@
     "*"
   ],
   "last_sync_file": "last_sync.txt",
-  "activitywatch_endpoint": "http://localhost:5600/api/0/buckets/aw-watcher-android-test/events",
+  "activitywatch_base_url": "http://localhost:5600",
+  "activitywatch_hostname": "FloneA54",
   "timestamp_fields": [
     "timestamp",
     "time",

@@ -49,6 +49,8 @@ The exported data is written to the target bucket `aw-watcher-android-test`. A s
 
 * Set `google_drive_folder_id` to the Drive folder ID from the shared folder URL.
 * Set `google_drive_service_account_file` to the path of the service account JSON key on the PC.
+* Set `activitywatch_base_url` to the host and port of your ActivityWatch server, for example `http://localhost:5600` or `http://192.168.1.50:5600`.
+* Set `activitywatch_hostname` if you want to override the hostname stored in created bucket metadata.
 * Make sure the uploaded export file is a regular file, not a Google Docs document.
 
 ---

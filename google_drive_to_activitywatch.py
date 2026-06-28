@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from urllib import error, request
-from urllib.parse import urlparse, urlunparse
 
 
 CONFIG_FILE = Path(__file__).with_name("config.json")
@@ -23,7 +22,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "google_drive_service_account_file": "",
     "input_file_globs": ["*"],
     "last_sync_file": "last_sync.txt",
-    "activitywatch_endpoint": "http://localhost:5600/api/v1/buckets/aw-watcher-android-test/events",
+    "activitywatch_base_url": "http://localhost:5600",
+    "activitywatch_hostname": "AndroidDevice",
     "timestamp_fields": ["timestamp", "time", "datetime", "date", "start", "created_at"],
     "duration_fields": ["duration", "length", "seconds"],
     "payload_fields": ["data", "event", "payload"],
@@ -45,7 +45,8 @@ class AppConfig:
     google_drive_service_account_file: Path | None
     input_file_globs: list[str]
     last_sync_file: Path
-    activitywatch_endpoint: str
+    activitywatch_base_url: str
+    activitywatch_hostname: str
     timestamp_fields: list[str]
     duration_fields: list[str]
     payload_fields: list[str]
@@ -108,12 +109,16 @@ def build_config() -> AppConfig:
     ):
         raise ValueError("input_file_globs must be a non-empty list of strings.")
 
+    activitywatch_base_url = str(raw.get("activitywatch_base_url", "http://localhost:5600")).strip() or "http://localhost:5600"
+    activitywatch_hostname = str(raw.get("activitywatch_hostname", "")).strip()
+
     return AppConfig(
         google_drive_folder_id=google_drive_folder_id,
         google_drive_service_account_file=service_account_file,
         input_file_globs=input_file_globs,
         last_sync_file=last_sync_file,
-        activitywatch_endpoint=str(raw["activitywatch_endpoint"]),
+        activitywatch_base_url=activitywatch_base_url,
+        activitywatch_hostname=activitywatch_hostname,
         timestamp_fields=[str(item) for item in raw.get("timestamp_fields", []) if str(item)],
         duration_fields=[str(item) for item in raw.get("duration_fields", []) if str(item)],
         payload_fields=[str(item) for item in raw.get("payload_fields", []) if str(item)],
@@ -180,23 +185,11 @@ def file_matches(name: str, patterns: Iterable[str]) -> bool:
     return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
 
 
-def parse_activitywatch_endpoint(endpoint: str) -> tuple[str, str]:
-    parsed = urlparse(endpoint)
-    parts = [part for part in parsed.path.split("/") if part]
-    if len(parts) < 4 or parts[-1] != "events" or parts[-3] != "buckets":
-        raise ValueError(
-            "activitywatch_endpoint must end with /buckets/<bucket_id>/events."
-        )
-
-    bucket_id = parts[-2]
-    if len(parts) < 4 or parts[0] != "api":
-        raise ValueError(
-            "activitywatch_endpoint must include an API prefix like /api/0/buckets/<bucket_id>/events."
-        )
-    parts[1] = "0"
-    bucket_path = "/" + "/".join(parts[:-1])
-    bucket_url = urlunparse(parsed._replace(path=bucket_path, params="", query="", fragment=""))
-    return bucket_url, bucket_id
+def build_activitywatch_urls(base_url: str, bucket_id: str) -> tuple[str, str]:
+    base = base_url.rstrip("/")
+    bucket_url = f"{base}/api/0/buckets/{bucket_id}"
+    events_url = f"{bucket_url}/events"
+    return bucket_url, events_url
 
 
 @dataclass(frozen=True)
@@ -228,24 +221,27 @@ def aw_request(url: str, method: str, timeout_seconds: int, body: bytes | None =
         return response.read()
 
 
-def ensure_activitywatch_bucket(endpoint: str, timeout_seconds: int) -> None:
-    bucket_url, bucket_id = parse_activitywatch_endpoint(endpoint)
+def ensure_activitywatch_bucket(base_url: str, bucket: ExportBucket, hostname_override: str, timeout_seconds: int) -> None:
+    bucket_url, _ = build_activitywatch_urls(base_url, bucket.bucket_id)
+    bucket_hostname = hostname_override or bucket.hostname or socket.gethostname()
     bucket_payload = {
-        "client": "google_drive_to_activitywatch",
-        "hostname": socket.gethostname(),
-        "type": "manual",
+        "client": bucket.client or "google_drive_to_activitywatch",
+        "hostname": bucket_hostname,
+        "type": bucket.bucket_type or "manual",
     }
+    if bucket.data:
+        bucket_payload["data"] = bucket.data
 
     try:
         aw_request(bucket_url, "POST", timeout_seconds, json.dumps(bucket_payload).encode("utf-8"))
-        log(f"Ensured ActivityWatch bucket exists: {bucket_id}")
+        log(f"Ensured ActivityWatch bucket exists: {bucket.bucket_id}")
     except error.HTTPError as exc:
         if exc.code in {200, 201, 204, 304, 409}:
             return
         if exc.code == 405:
             raise RuntimeError(
                 f"ActivityWatch rejected bucket creation at {bucket_url} with 405. "
-                "Check that activitywatch_endpoint uses the documented /api/0/buckets/<bucket_id>/events route."
+                "Check that ActivityWatch is running and accepts bucket creation on the /api/0 REST route."
             ) from exc
         raise
 
@@ -386,11 +382,101 @@ def parse_plain_text_records(path: Path, encoding: str) -> list[dict[str, Any]]:
     return records
 
 
-def load_source_records(path: Path, encoding: str) -> list[dict[str, Any]]:
-    records = load_json_records(path, encoding)
+@dataclass(frozen=True)
+class ExportBucket:
+    bucket_id: str
+    bucket_type: str
+    client: str
+    hostname: str
+    data: dict[str, Any]
+    records: list[dict[str, Any]]
+
+
+def collect_json_records(value: Any) -> list[dict[str, Any]]:
+    collected: list[dict[str, Any]] = []
+    if isinstance(value, list):
+        for item in value:
+            collected.extend(collect_json_records(item))
+        return collected
+
+    if not isinstance(value, dict):
+        return collected
+
+    if "timestamp" in value:
+        collected.append(value)
+
+    for key in ("events", "records", "items", "rows", "data"):
+        nested = value.get(key)
+        if isinstance(nested, list):
+            for item in nested:
+                collected.extend(collect_json_records(item))
+        elif isinstance(nested, dict):
+            for item in nested.values():
+                collected.extend(collect_json_records(item))
+
+    return collected
+
+
+def load_export_buckets(path: Path, encoding: str) -> list[ExportBucket]:
+    with path.open("r", encoding=encoding) as handle:
+        text = handle.read().strip()
+    if not text:
+        return []
+
+    try:
+        root = json.loads(text)
+    except json.JSONDecodeError:
+        plain_records = parse_plain_text_records(path, encoding)
+        return [
+            ExportBucket(
+                bucket_id="imported",
+                bucket_type="manual",
+                client="google_drive_to_activitywatch",
+                hostname="",
+                data={},
+                records=plain_records,
+            )
+        ] if plain_records else []
+
+    exports: list[ExportBucket] = []
+    if isinstance(root, dict) and isinstance(root.get("buckets"), dict):
+        for fallback_bucket_id, bucket_value in root["buckets"].items():
+            if not isinstance(bucket_value, dict):
+                continue
+            records = collect_json_records(bucket_value.get("events"))
+            if not records:
+                continue
+            bucket_id = str(bucket_value.get("id") or fallback_bucket_id).strip() or str(fallback_bucket_id)
+            bucket_type = str(bucket_value.get("type", "manual"))
+            client = str(bucket_value.get("client", "google_drive_to_activitywatch"))
+            hostname = str(bucket_value.get("hostname", "") or "")
+            data_value = bucket_value.get("data")
+            data = data_value if isinstance(data_value, dict) else {}
+            exports.append(
+                ExportBucket(
+                    bucket_id=bucket_id,
+                    bucket_type=bucket_type,
+                    client=client,
+                    hostname=hostname,
+                    data=data,
+                    records=records,
+                )
+            )
+        return exports
+
+    records = collect_json_records(root)
     if records:
-        return records
-    return parse_plain_text_records(path, encoding)
+        exports.append(
+            ExportBucket(
+                bucket_id="imported",
+                bucket_type="manual",
+                client="google_drive_to_activitywatch",
+                hostname="",
+                data={},
+                records=records,
+            )
+        )
+    return exports
 
 
 def pick_first(value: dict[str, Any], keys: Iterable[str]) -> Any:
@@ -489,7 +575,6 @@ def main() -> int:
         assert service_account_file is not None
         assert config.google_drive_folder_id is not None
         session = build_drive_session(service_account_file)
-        ensure_activitywatch_bucket(config.activitywatch_endpoint, config.request_timeout_seconds)
         drive_file = find_latest_drive_file(
             session,
             config.google_drive_folder_id,
@@ -506,24 +591,44 @@ def main() -> int:
         log(f"Latest source file from Google Drive: {drive_file.name}")
         log(f"Latest source file: {latest_file}")
 
-        records = load_source_records(latest_file, config.encoding)
-        if not records:
-            log("No parseable records found in the downloaded export. Nothing to send.")
+        bucket_exports = load_export_buckets(latest_file, config.encoding)
+        if not bucket_exports:
+            log("No parseable bucket exports found in the downloaded export. Nothing to send.")
             return 0
-        log(f"Loaded {len(records)} source record(s).")
 
-        events, newest_timestamp = collect_events(records, config, last_sync)
-        if not events:
+        total_events = 0
+        newest_timestamp = last_sync
+        for bucket_export in bucket_exports:
+            events, bucket_newest = collect_events(bucket_export.records, config, last_sync)
+            if not events:
+                continue
+
+            ensure_activitywatch_bucket(
+                config.activitywatch_base_url,
+                bucket_export,
+                config.activitywatch_hostname,
+                config.request_timeout_seconds,
+            )
+            bucket_endpoint = build_activitywatch_urls(
+                config.activitywatch_base_url,
+                bucket_export.bucket_id,
+            )[1]
+            post_events(bucket_endpoint, events, config.request_timeout_seconds)
+            total_events += len(events)
+            if bucket_newest is not None and (newest_timestamp is None or bucket_newest > newest_timestamp):
+                newest_timestamp = bucket_newest
+            log(f"Imported {len(events)} event(s) into bucket {bucket_export.bucket_id}.")
+
+        if total_events == 0:
             if last_sync is None:
                 log("No importable events found in the source export.")
             else:
                 log(f"No new events to import after last_sync={format_timestamp(last_sync)}.")
             return 0
 
-        post_events(config.activitywatch_endpoint, events, config.request_timeout_seconds)
         if newest_timestamp is not None:
             write_last_sync(config.last_sync_file, newest_timestamp)
-        log(f"Imported {len(events)} event(s) successfully.")
+        log(f"Imported {total_events} event(s) across {len(bucket_exports)} bucket export(s) successfully.")
         return 0
     except KeyboardInterrupt:
         log("Interrupted.")
